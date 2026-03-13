@@ -17,7 +17,7 @@ import { RpcTarget } from "cloudflare:workers";
 import { buildCatalogSearchSource } from "./catalog-search";
 import { buildOpenApiSearchSource } from "./openapi-search";
 import { buildApiProxySource } from "./api-proxy";
-import { createApiProxyTool } from "../tools/api-proxy";
+import { createApiProxyTool, createQueryProxyTool } from "../tools/api-proxy";
 import { createCodeModeResponse, createCodeModeError, ErrorCodes } from "./response";
 /** RPC target that dispatches tool calls from the isolate back to the host. */
 class ToolDispatcher extends RpcTarget {
@@ -55,6 +55,7 @@ class DynamicWorkerExecutor {
             "export default class CodeExecutor extends WorkerEntrypoint {",
             "  async evaluate(dispatcher) {",
             "    const __logs = [];",
+            "    var __stagedResults = [];",
             '    const __fmt = (v) => typeof v === "string" ? v : (() => { try { return JSON.stringify(v); } catch { return String(v); } })();',
             '    const __join = (...a) => a.map(__fmt).join(" ");',
             '    console.log = (...a) => { __logs.push(__join(...a)); };',
@@ -93,9 +94,9 @@ class DynamicWorkerExecutor {
             ")(),",
             `        new Promise((_, reject) => setTimeout(() => reject(new Error("Execution timed out")), ${timeoutMs}))`,
             "      ]);",
-            "      return { result, logs: __logs };",
+            "      return { result, logs: __logs, __stagedResults: typeof __stagedResults !== 'undefined' && __stagedResults.length > 0 ? __stagedResults : undefined };",
             "    } catch (err) {",
-            "      return { result: undefined, error: err.message, logs: __logs };",
+            "      return { result: undefined, error: err.message, logs: __logs, __stagedResults: typeof __stagedResults !== 'undefined' && __stagedResults.length > 0 ? __stagedResults : undefined };",
             "    }",
             "  }",
             "}",
@@ -113,9 +114,9 @@ class DynamicWorkerExecutor {
             .getEntrypoint()
             .evaluate(dispatcher);
         if (response.error) {
-            return { result: undefined, error: response.error, logs: response.logs };
+            return { result: undefined, error: response.error, logs: response.logs, __stagedResults: response.__stagedResults };
         }
-        return { result: response.result, logs: response.logs };
+        return { result: response.result, logs: response.logs, __stagedResults: response.__stagedResults };
     }
 }
 /**
@@ -172,11 +173,22 @@ export function createExecuteTool(options) {
         stagingThreshold,
     };
     const apiProxyTool = createApiProxyTool(apiProxyToolOpts);
+    // Build the __query_proxy handler (only available if DO namespace exists)
+    const queryProxyTool = doNamespace
+        ? createQueryProxyTool({ doNamespace })
+        : undefined;
     // Build the function map for the executor
     const executorFns = {
         __api_proxy: async (args) => {
             const input = (args ?? {});
             return apiProxyTool.handler(input, {});
+        },
+        __query_proxy: async (args) => {
+            if (!queryProxyTool) {
+                return { __query_error: true, message: "Staged data querying is not available (no DO namespace configured)" };
+            }
+            const input = (args ?? {});
+            return queryProxyTool.handler(input, {});
         },
     };
     return {
@@ -191,10 +203,18 @@ export function createExecuteTool(options) {
             (preamble ? `\nDomain-specific helper functions are also available — see the catalog notes for details.\n` : "") +
             `\nUse ${prefix}_search first to discover endpoints, then write code here to call them.\n` +
             `The last expression or return value is the result.\n\n` +
-            `STAGING: Large responses (>100KB) are auto-staged into SQLite. When this happens, ` +
+            `STAGING: Large responses (>30KB) are auto-staged into SQLite. When this happens, ` +
             `api.get/api.post returns {__staged: true, data_access_id, schema, tables_created, total_rows, message}. ` +
-            `Check result.__staged and return the staging info — use ${prefix}_query_data with the data_access_id to explore staged data.\n\n` +
-            `IMPORTANT: Use limit/pagination params to keep responses small. If you need large datasets, let them auto-stage and use ${prefix}_query_data to query with SQL.` +
+            `Scalar properties from the original response (.count, .total, .meta) are preserved on the staged object.\n\n` +
+            `When staging occurs:\n` +
+            `1. Check result.__staged === true\n` +
+            `2. Read any preserved scalars (result.count, result.total, etc.)\n` +
+            `3. Return the staging metadata — the caller will use ${prefix}_query_data with the data_access_id to explore the data with SQL\n\n` +
+            `DO NOT try to access .results, .data, .entries, .items on a staged response — those arrays were replaced by SQLite tables.\n\n` +
+            `For advanced use: api.query(data_access_id, sql) and db.queryStaged(data_access_id, sql) are available to query staged data ` +
+            `within the same execution (returns {results, row_count}, max 1000 rows, SELECT only). ` +
+            `This is useful when you need to aggregate or filter staged data before returning.\n\n` +
+            `IMPORTANT: Use limit/pagination params to keep responses small. If you need large datasets, let them auto-stage and return the staging info.` +
             notesSection,
         schema: {
             code: z.string().describe("JavaScript code to execute. Use api.get/api.post for API calls. " +
@@ -214,14 +234,49 @@ export function createExecuteTool(options) {
                     const executor = new DynamicWorkerExecutor({ loader, timeout });
                     const result = await executor.execute(wrappedCode, executorFns);
                     if (result.error) {
+                        // If the error was caused by accessing staged data arrays, recover
+                        // the staging metadata and return it as a success response instead.
+                        if (result.__stagedResults?.length) {
+                            const staged = result.__stagedResults[result.__stagedResults.length - 1];
+                            const logOutput = result.logs?.length ? result.logs.join("\n") : undefined;
+                            const { schema: _s, _staging: _st, ...slim } = staged;
+                            return createCodeModeResponse(slim, {
+                                meta: {
+                                    staged: true,
+                                    data_access_id: staged.data_access_id,
+                                    tables_created: staged.tables_created,
+                                    total_rows: staged.total_rows,
+                                    ...(logOutput ? { console_output: logOutput } : {}),
+                                    executed_at: new Date().toISOString(),
+                                },
+                            });
+                        }
                         const logOutput = result.logs?.length
                             ? `\n\nConsole output:\n${result.logs.join("\n")}`
                             : "";
                         return createCodeModeError(ErrorCodes.API_ERROR, `${result.error}${logOutput}`);
                     }
                     const logOutput = result.logs?.length ? result.logs.join("\n") : undefined;
-                    return createCodeModeResponse(result.result, {
+                    // Detect staging metadata in the result and hoist to _meta so
+                    // downstream clients can find data_access_id without digging into data.
+                    // Also strip large redundant fields (schema, _staging) to stay under
+                    // the 100KB structuredContent transport limit.
+                    const resultObj = result.result;
+                    const isStaged = resultObj && typeof resultObj === "object" && resultObj.__staged === true;
+                    let responseData = result.result;
+                    const stagingMeta = {};
+                    if (isStaged) {
+                        stagingMeta.staged = true;
+                        stagingMeta.data_access_id = resultObj.data_access_id;
+                        stagingMeta.tables_created = resultObj.tables_created;
+                        stagingMeta.total_rows = resultObj.total_rows;
+                        // Strip large fields that are available via get_schema tool
+                        const { schema: _s, _staging: _st, ...slim } = resultObj;
+                        responseData = slim;
+                    }
+                    return createCodeModeResponse(responseData, {
                         meta: {
+                            ...stagingMeta,
                             ...(logOutput ? { console_output: logOutput } : {}),
                             executed_at: new Date().toISOString(),
                         },

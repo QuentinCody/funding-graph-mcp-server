@@ -38,10 +38,6 @@ export default {
 			});
 		}
 
-		if (url.pathname === "/sse" || url.pathname === "/sse/message") {
-			return MyMCP.serveSSE("/sse", { binding: "MCP_OBJECT" }).fetch(request, env, ctx);
-		}
-
 		if (url.pathname === "/mcp") {
 			return MyMCP.serve("/mcp", { binding: "MCP_OBJECT" }).fetch(request, env, ctx);
 		}

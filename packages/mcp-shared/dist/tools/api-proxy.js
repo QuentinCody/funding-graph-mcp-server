@@ -7,7 +7,7 @@
  * auto-stages large responses via stageToDoAndRespond().
  */
 import { z } from "zod";
-import { shouldStage, stageToDoAndRespond } from "../staging/utils";
+import { shouldStage, stageToDoAndRespond, queryDataFromDo } from "../staging/utils";
 /** Path traversal patterns to reject */
 const DANGEROUS_PATTERNS = [
     /\.\.\//, // Directory traversal
@@ -332,6 +332,46 @@ export function createApiProxyTool(options) {
                     data: err.data,
                     ...(driftHint ? { drift_hint: driftHint } : {}),
                 };
+            }
+        },
+    };
+}
+/**
+ * Create the hidden __query_proxy tool entry.
+ * Routes SQL queries from isolate api.query()/db.queryStaged() to the
+ * Durable Object's /query endpoint via queryDataFromDo().
+ */
+export function createQueryProxyTool(options) {
+    const { doNamespace } = options;
+    return {
+        name: "__query_proxy",
+        description: "Route SQL queries from V8 isolate to staged data DO. Internal only.",
+        hidden: true,
+        schema: {
+            data_access_id: z.string(),
+            sql: z.string(),
+        },
+        handler: async (input) => {
+            const dataAccessId = String(input.data_access_id || "");
+            const sql = String(input.sql || "");
+            if (!dataAccessId) {
+                return { __query_error: true, message: "data_access_id is required" };
+            }
+            if (!sql) {
+                return { __query_error: true, message: "sql is required" };
+            }
+            try {
+                const result = await queryDataFromDo(doNamespace, dataAccessId, sql, 1000);
+                return {
+                    rows: result.rows,
+                    row_count: result.row_count,
+                    sql: result.sql,
+                    data_access_id: result.data_access_id,
+                };
+            }
+            catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                return { __query_error: true, message };
             }
         },
     };

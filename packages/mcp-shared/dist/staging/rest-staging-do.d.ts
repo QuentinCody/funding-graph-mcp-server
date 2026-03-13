@@ -58,6 +58,16 @@ export declare class RestStagingDO extends DurableObject {
     private handleQuery;
     private handleQueryEnhanced;
     private handleSchema;
+    /**
+     * Register a staged data_access_id against a session.
+     * Called on the __registry__ DO instance by stageToDoAndRespond().
+     */
+    private handleRegister;
+    /**
+     * List staged data_access_ids for a session.
+     * Called on the __registry__ DO instance by get_schema when data_access_id is omitted.
+     */
+    private handleList;
     private jsonResponse;
 }
 //# sourceMappingURL=rest-staging-do.d.ts.map

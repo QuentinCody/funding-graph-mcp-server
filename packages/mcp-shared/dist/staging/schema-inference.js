@@ -234,7 +234,9 @@ function inferChildTableSchema(parentTableName, sourceColumn, values, depth = 0,
     const indexes = ["parent_id"];
     const grandchildTables = [];
     const extractedColumns = new Set();
-    for (const [colName, colValues] of columnValues) {
+    for (const [rawColName, colValues] of columnValues) {
+        // Rename source columns that collide with the synthetic parent_id FK
+        const colName = rawColName === "parent_id" ? "source_parent_id" : rawColName;
         const classification = classifyColumn(colValues);
         // Recurse into object arrays if we haven't hit the depth limit
         if (classification === "object_array" && depth + 1 < maxRecursionDepth) {
@@ -566,7 +568,9 @@ export function materializeSchema(schema, rows, sql, hints) {
                 const childValues = childColNames.map((col) => {
                     if (col === "parent_id")
                         return parentId;
-                    const v = childFlat[col];
+                    // Reverse the source_parent_id rename from schema inference
+                    const lookupKey = col === "source_parent_id" ? "parent_id" : col;
+                    const v = childFlat[lookupKey];
                     return sqlValue(v);
                 });
                 try {

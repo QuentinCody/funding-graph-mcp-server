@@ -20,8 +20,10 @@ export function generateDataAccessId(prefix) {
  *
  * @param toolPrefix - Tool name prefix for query_data/get_schema tool names (e.g. "ctgov", "faers").
  *   If not provided, falls back to `prefix` (the data access ID prefix).
+ * @param sessionId - MCP transport session ID. When provided, registers the staged dataset
+ *   in a session-scoped registry so get_schema can list available datasets after context compaction.
  */
-export async function stageToDoAndRespond(data, doNamespace, prefix, _schemaHints, provenance, toolPrefix) {
+export async function stageToDoAndRespond(data, doNamespace, prefix, _schemaHints, provenance, toolPrefix, sessionId) {
     const dataAccessId = generateDataAccessId(prefix);
     const doId = doNamespace.idFromName(dataAccessId);
     const doInstance = doNamespace.get(doId);
@@ -45,6 +47,28 @@ export async function stageToDoAndRespond(data, doNamespace, prefix, _schemaHint
     const schemaResult = (await schemaResp.json());
     const tables = processResult.tables_created ?? [];
     const resolvedToolPrefix = toolPrefix ?? prefix;
+    // Register in session registry if sessionId is available
+    if (sessionId) {
+        try {
+            const registryId = doNamespace.idFromName("__registry__");
+            const registryDo = doNamespace.get(registryId);
+            await registryDo.fetch(new Request("http://localhost/register", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    session_id: sessionId,
+                    data_access_id: dataAccessId,
+                    tool_name: provenance?.toolName,
+                    tables,
+                    total_rows: processResult.total_rows,
+                    tool_prefix: resolvedToolPrefix,
+                }),
+            }));
+        }
+        catch {
+            // Non-critical — don't fail staging if registry write fails
+        }
+    }
     return {
         dataAccessId,
         schema: schemaResult.success ? schemaResult.schema : null,
@@ -176,25 +200,62 @@ export function createQueryDataHandler(doBindingName, toolPrefix) {
 }
 /**
  * Standard get_schema tool handler. Use in registerTool callback.
+ *
+ * When `data_access_id` is provided, returns the schema for that specific dataset.
+ * When omitted, uses the MCP session to list all staged datasets available in this session.
  */
 export function createGetSchemaHandler(doBindingName, toolPrefix) {
-    return async (args, env) => {
+    return async (args, env, sessionId) => {
         const doNamespace = env[doBindingName];
         if (!doNamespace) {
             return createCodeModeError("DATA_ACCESS_ERROR", `${doBindingName} environment not available`);
         }
+        const dataAccessId = String(args.data_access_id || "");
+        // If data_access_id is provided, return schema for that specific dataset
+        if (dataAccessId) {
+            try {
+                const result = await getSchemaFromDo(doNamespace, dataAccessId);
+                return createCodeModeResponse(result, {
+                    textSummary: JSON.stringify(result),
+                });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                return createCodeModeError("DATA_ACCESS_ERROR", `${toolPrefix}_get_schema failed: ${msg}`);
+            }
+        }
+        // No data_access_id — list available staged datasets for this session
         try {
-            const dataAccessId = String(args.data_access_id || "");
-            if (!dataAccessId)
-                throw new Error("data_access_id is required");
-            const result = await getSchemaFromDo(doNamespace, dataAccessId);
-            return createCodeModeResponse(result, {
-                textSummary: JSON.stringify(result),
+            const registryId = doNamespace.idFromName("__registry__");
+            const registryDo = doNamespace.get(registryId);
+            const listResp = await registryDo.fetch(new Request(`http://localhost/list?session_id=${encodeURIComponent(sessionId || "")}`));
+            const listResult = (await listResp.json());
+            const datasets = listResult.datasets ?? [];
+            if (datasets.length === 0) {
+                return createCodeModeResponse({
+                    staged_datasets: [],
+                    message: "No staged datasets found for this session. Data may have been staged in a previous session, or no tools have returned large enough responses to trigger staging yet.",
+                }, { textSummary: "No staged datasets found for this session." });
+            }
+            const listing = datasets.map((d) => ({
+                data_access_id: d.data_access_id,
+                tool_name: d.tool_name,
+                tables: d.tables,
+                total_rows: d.total_rows,
+                query_tool: `${d.tool_prefix || toolPrefix}_query_data`,
+                schema_tool: `${d.tool_prefix || toolPrefix}_get_schema`,
+                created_at: d.created_at,
+            }));
+            return createCodeModeResponse({
+                staged_datasets: listing,
+                hint: "Call this tool with a specific data_access_id to get the full schema for that dataset.",
+            }, {
+                textSummary: `Found ${listing.length} staged dataset(s) in this session:\n${listing.map((d) => `  - ${d.data_access_id} (${d.tool_name || "unknown"}, ${d.total_rows ?? "?"} rows, tables: ${d.tables.join(", ")})`).join("\n")}`,
             });
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            return createCodeModeError("DATA_ACCESS_ERROR", `${toolPrefix}_get_schema failed: ${msg}`);
+            return createCodeModeError("DATA_ACCESS_ERROR", `${toolPrefix}_get_schema listing failed: ${msg}`);
         }
     };
 }

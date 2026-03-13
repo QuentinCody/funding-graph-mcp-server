@@ -36,8 +36,10 @@ export interface StageResult {
  *
  * @param toolPrefix - Tool name prefix for query_data/get_schema tool names (e.g. "ctgov", "faers").
  *   If not provided, falls back to `prefix` (the data access ID prefix).
+ * @param sessionId - MCP transport session ID. When provided, registers the staged dataset
+ *   in a session-scoped registry so get_schema can list available datasets after context compaction.
  */
-export declare function stageToDoAndRespond(data: unknown, doNamespace: DurableObjectNamespace, prefix: string, _schemaHints?: SchemaHints, provenance?: StagingProvenance, toolPrefix?: string): Promise<StageResult>;
+export declare function stageToDoAndRespond(data: unknown, doNamespace: DurableObjectNamespace, prefix: string, _schemaHints?: SchemaHints, provenance?: StagingProvenance, toolPrefix?: string, sessionId?: string): Promise<StageResult>;
 /**
  * Query staged data from a Durable Object with SQL safety checks.
  */
@@ -68,11 +70,28 @@ export declare function createQueryDataHandler(doBindingName: string, toolPrefix
 }>>>;
 /**
  * Standard get_schema tool handler. Use in registerTool callback.
+ *
+ * When `data_access_id` is provided, returns the schema for that specific dataset.
+ * When omitted, uses the MCP session to list all staged datasets available in this session.
  */
-export declare function createGetSchemaHandler(doBindingName: string, toolPrefix: string): (args: Record<string, unknown>, env: Record<string, unknown>) => Promise<import("..").CodeModeResponse<import("..").ErrorResponse> | import("..").CodeModeResponse<import("..").SuccessResponse<{
+export declare function createGetSchemaHandler(doBindingName: string, toolPrefix: string): (args: Record<string, unknown>, env: Record<string, unknown>, sessionId?: string) => Promise<import("..").CodeModeResponse<import("..").ErrorResponse> | import("..").CodeModeResponse<import("..").SuccessResponse<{
     data_access_id: string;
     schema: object;
     retrieved_at: string;
+}>> | import("..").CodeModeResponse<import("..").SuccessResponse<{
+    staged_datasets: never[];
+    message: string;
+}>> | import("..").CodeModeResponse<import("..").SuccessResponse<{
+    staged_datasets: {
+        data_access_id: string;
+        tool_name: string | null;
+        tables: string[];
+        total_rows: number | null;
+        query_tool: string;
+        schema_tool: string;
+        created_at: string;
+    }[];
+    hint: string;
 }>>>;
 export {};
 //# sourceMappingURL=utils.d.ts.map

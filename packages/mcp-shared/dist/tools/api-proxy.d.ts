@@ -26,4 +26,14 @@ export interface ApiProxyToolOptions {
  * Create the hidden __api_proxy tool entry.
  */
 export declare function createApiProxyTool(options: ApiProxyToolOptions): ToolEntry;
+export interface QueryProxyToolOptions {
+    /** DO namespace for querying staged data */
+    doNamespace: unknown;
+}
+/**
+ * Create the hidden __query_proxy tool entry.
+ * Routes SQL queries from isolate api.query()/db.queryStaged() to the
+ * Durable Object's /query endpoint via queryDataFromDo().
+ */
+export declare function createQueryProxyTool(options: QueryProxyToolOptions): ToolEntry;
 //# sourceMappingURL=api-proxy.d.ts.map
