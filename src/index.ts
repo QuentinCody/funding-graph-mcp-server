@@ -13,8 +13,7 @@ interface FundingGraphEnv {
 }
 
 export class MyMCP extends McpAgent {
-	// biome-ignore lint/suspicious/noExplicitAny: agents and the SDK resolve McpServer through different private types.
-	server: any = new McpServer({
+	server = new McpServer({
 		name: "funding-graph",
 		version: "0.1.0",
 	});

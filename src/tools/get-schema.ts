@@ -6,7 +6,7 @@ interface SchemaEnv {
 	FUNDING_GRAPH_DATA_DO?: unknown;
 }
 
-export function registerGetSchema(server: McpServer, env?: SchemaEnv) {
+export function registerGetSchema(server: McpServer, env?: SchemaEnv): void {
 	const handler = createGetSchemaHandler("FUNDING_GRAPH_DATA_DO", "funding_graph");
 
 	server.registerTool(
