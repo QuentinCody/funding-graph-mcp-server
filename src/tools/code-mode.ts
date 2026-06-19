@@ -30,6 +30,8 @@ export function registerCodeMode(
 
 	const executeTool = createExecuteTool({
 		prefix: "funding_graph",
+		// Verifiable provenance: funding_graph_execute results carry a _meta.citation.
+		source: { id: "funding_graph", name: "Funding Graph" },
 		catalog: fundingGraphCatalog,
 		apiFetch,
 		doNamespace: env.FUNDING_GRAPH_DATA_DO,
