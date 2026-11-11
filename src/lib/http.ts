@@ -28,7 +28,7 @@ function fundingFetch(
 		body: request.body as Record<string, unknown> | string | undefined,
 		headers,
 		retryOn: [429, 500, 502, 503],
-		retries: opts?.retries ?? 3,
+		retries: opts?.retries ?? (request.method.toUpperCase() === "GET" && baseUrl !== CORDIS_BASE ? 3 : 0),
 		timeout: opts?.timeout ?? 30_000,
 		userAgent,
 	});

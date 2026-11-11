@@ -1,13 +1,18 @@
+import { fundingReadEndpoints, fundingReadWorkflows } from "./linked-data";
+import { fundingPublicationWorkflows } from "./publication-workflows";
+import { dumpEndpoints, dumpWorkflows } from "./eurio-dumps";
 import type { ApiCatalog } from "@bio-mcp/shared/codemode/catalog";
 
 export const fundingGraphCatalog: ApiCatalog = {
-	name: "Funding Graph (NIH RePORTER + NSF Award Search + CORDIS DET + USAspending)",
+	name: "Funding Graph (NIH RePORTER + NSF Award Search + CORDIS DET/EURIO + USAspending)",
 	baseUrl: "https://multi-api.local/funding-graph",
 	version: "0.1",
 	auth: "mixed_public_and_api_key",
-	endpointCount: 14,
+  workflows: [...fundingPublicationWorkflows, ...fundingReadWorkflows, ...dumpWorkflows],
+	endpointCount: 22,
 	notes:
-		"- Multi-API REST server. Prefix every path with /reporter, /nsf, /cordis, or /usaspending.\n" +
+		"- HTTP 206 and Content-Range are rejected. Bodies are limited to 4 MiB and 30 seconds after headers; complete transport does not imply complete award/search coverage.\n" +
+		"- Multi-API REST server. Prefix every path with /reporter, /nsf, /cordis, /eurio, or /usaspending. EURIO uses bounded public SPARQL reads; DET extraction jobs require a key.\n" +
 		"- NIH RePORTER and USAspending use POST search endpoints with JSON bodies.\n" +
 		"- NSF Award Search uses .json suffix endpoints and query string filters.\n" +
 		"- CORDIS DET is an extraction-job API and requires an API key in the query string.\n" +
@@ -16,7 +21,7 @@ export const fundingGraphCatalog: ApiCatalog = {
 		"NIH RePORTER /projects/search POST body format:\n" +
 		"  { criteria: { ... }, offset: 0, limit: 25, sort_field: 'project_start_date', sort_order: 'desc' }\n" +
 		"  criteria fields (all optional):\n" +
-		"    advanced_text_search: { operator: 'and'|'or'|'advanced', search_field: 'terms'|'projecttitle'|'abstract'|'projectnumber', search_text: 'query string' }\n" +
+		"    advanced_text_search: { operator: 'and'|'or'|'advanced', search_field: 'terms'|'projecttitle'|'abstracttext'|'all' (or a comma-separated list of title, terms and abstracttext fields), search_text: 'query string' }\n" +
 		"    pi_names: [{ first_name: 'John', last_name: 'Doe' }]\n" +
 		"    org_names: ['Massachusetts Institute of Technology']\n" +
 		"    org_cities: ['Boston'], org_states: ['MA']\n" +
@@ -25,12 +30,14 @@ export const fundingGraphCatalog: ApiCatalog = {
 		"    project_nums: ['R01CA123456']\n" +
 		"    award_types: ['1']  (1=new, 2=competing renewal, 5=non-competing)\n" +
 		"    activity_codes: ['R01','R21','U01','P01']\n" +
-		"  IMPORTANT: For text search, you MUST use criteria.advanced_text_search, NOT criteria.text_search or a top-level query field.\n" +
+		"  For text search, use criteria.advanced_text_search with projecttitle, terms, abstracttext (or all). Organization searches use org_names (provider wildcard matching), or org_names_exact_match. Project-number searches use project_nums.\n" +
 		"\n" +
 		"NIH RePORTER /publications/search POST body format:\n" +
 		"  { criteria: { pmids: [12345678] }, offset: 0, limit: 25 }\n" +
 		"  OR { criteria: { core_project_nums: ['R01CA123456'] }, offset: 0, limit: 25 }",
 	endpoints: [
+    ...dumpEndpoints,
+    ...fundingReadEndpoints,
 		{
 			method: "POST",
 			path: "/reporter/projects/search",
@@ -39,8 +46,8 @@ export const fundingGraphCatalog: ApiCatalog = {
 			body: {
 				contentType: "application/json",
 				description:
-					"RePORTER project search. REQUIRED structure: { criteria: { advanced_text_search: { operator: 'and', search_field: 'terms', search_text: 'your query' } }, offset: 0, limit: 25 }. " +
-					"Other criteria fields: pi_names (array of {first_name, last_name}), org_names (array of strings), fiscal_years (array of ints), agencies (array like ['NIH']), activity_codes (array like ['R01','R21']).",
+					"RePORTER project search. Text-search example: { criteria: { advanced_text_search: { operator: 'and', search_field: 'terms', search_text: 'your query' } }, offset: 0, limit: 25 }. " +
+					"Other criteria fields: pi_names (array of {first_name, last_name}), org_names (array of strings), fiscal_years (array of ints), agencies (array like ['NIH']), activity_codes (array like ['R01','R21']). Organization-only example: { criteria: { org_names: ['EMORY UNIVERSITY'] }, offset: 0, limit: 25 }. Returned pref_terms are text-mined concepts; organization is the funding recipient, not a drug-owner assertion.",
 			},
 		},
 		{

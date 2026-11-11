@@ -1,3 +1,4 @@
+import { fundingResponse } from "../lib/tool-result";
 import type { McpServer } from "@bio-mcp/shared/mcp";
 import { z } from "zod";
 import { createGetSchemaHandler } from "@bio-mcp/shared/staging/utils";
@@ -9,8 +10,9 @@ interface SchemaEnv {
 export function registerGetSchema(server: McpServer, env?: SchemaEnv): void {
 	const handler = createGetSchemaHandler("FUNDING_GRAPH_DATA_DO", "funding_graph");
 
+  for (const name of ["funding_graph_get_schema", "mcp_funding_graph_get_schema"]) {
 	server.registerTool(
-		"funding_graph_get_schema",
+		name,
 		{
 			title: "Get Staged Funding Graph Data Schema",
 			description:
@@ -26,11 +28,12 @@ export function registerGetSchema(server: McpServer, env?: SchemaEnv): void {
 		async (args, extra) => {
 			const runtimeEnv =
 				env || (extra as { env?: SchemaEnv })?.env || {};
-			return handler(
+			return fundingResponse(() => handler(
 				args as Record<string, unknown>,
 				runtimeEnv as Record<string, unknown>,
 				(extra as Record<string, unknown>),
-			);
+			), runtimeEnv, name, extra, args);
 		},
 	);
+  }
 }

@@ -1,3 +1,7 @@
+import { eurioRead } from "./eurio";
+import { eurioDumps } from "./eurio-dumps";
+import { usaRead } from "./usaspending";
+import { fail, readText } from "./response";
 import type { ApiFetchFn } from "@bio-mcp/shared/codemode/catalog";
 import { cordisFetch, nsfFetch, reporterFetch, usaspendingFetch } from "./http";
 
@@ -26,35 +30,25 @@ function pickFetcher(requestPath: string): { path: string; fetcher: Fetcher } {
 
 export function createFundingGraphApiFetch(): ApiFetchFn {
 	return async (request) => {
+    if (["/eurio/dumps", "/eurio/dump-manifest"].includes(request.path)) return eurioDumps(request);
+    if (request.path.startsWith("/eurio/")) return eurioRead(request);
+    if (/^\/usaspending\/(?:awards\/[^/]+\/?|transactions\/?)$/.test(request.path)) return usaRead(request);
 		const { path, fetcher } = pickFetcher(request.path);
 		const response = await fetcher({
 			...request,
 			path,
 		});
 
-		if (!response.ok) {
-			let errorBody: string;
-			try {
-				errorBody = await response.text();
-			} catch {
-				errorBody = response.statusText;
-			}
-			const error = new Error(`HTTP ${response.status}: ${errorBody.slice(0, 200)}`) as Error & {
-				status: number;
-				data: unknown;
-			};
-			error.status = response.status;
-			error.data = errorBody;
-			throw error;
-		}
+    const text = await readText(response);
 
 		const contentType = response.headers.get("content-type") || "";
 		if (!contentType.includes("json")) {
-			const text = await response.text();
 			return { status: response.status, data: text };
 		}
 
-		const data = await response.json();
+		let data: unknown;
+    try { data = JSON.parse(text.replace(/^\uFEFF/, "")); }
+    catch { fail("Funding provider returned invalid JSON", 502); }
 		return { status: response.status, data };
 	};
 }
