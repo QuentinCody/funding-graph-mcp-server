@@ -49,7 +49,7 @@ it.each([["x", 29838], ["Ω🧬", 4973]] as const)("stages %s near the wire boun
       const { output } = await call(f, `${prefix}funding_graph_execute`, args);
       expect(output.isError).not.toBe(true);
       expect(output.structuredContent.staged).toBe(true);
-      const full = await recover(f, output.structuredContent.data_access_id, prefix);
+      const full = await recover(f, output.structuredContent.data_access_id, prefix, async (name, args) => (await call(f, name, args)).output);
       expect(full.structuredContent.data.text).toBe(symbol.repeat(count));
       expect(full.content).toEqual(expect.any(Array));
       const verified = await verifyCitationEnvelope({ citation: output.structuredContent._meta.citation, structuredContent: output.structuredContent, toolArguments: args, materialized: { value: full } });
